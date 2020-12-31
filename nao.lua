@@ -32,18 +32,22 @@ local strings = require("cc.strings")
 
 settings.load()
 
-if not settings.get("nao.refreshInterval") then
-    settings.define("nao.keys.refresh", { default = "r", type = "string", description = "The key to press to force refresh to the file list.", })
-    settings.define("nao.keys.up", { default = "w", type = "string", description = "The key to press to move the selector up.", })
-    settings.define("nao.keys.down", { default = "s", type = "string", description = "The key to press to move the selector down.", })
-    settings.define("nao.keys.activate", { default = "space", type = "string", description = "The key to press to run files and enter directories.", })
-    settings.define("nao.keys.altActivate", { default = "leftAlt", type = "string", description = "The key to press to open the interaction menu.", })
-    settings.define("nao.refreshInterval", { default = 5, type = "number", description = "How long to wait before automatically refreshing the file list. Set to 0 to disable", })
-    settings.save()
-end
+settings.define("nao.keys.refresh", { default = "r", type = "string", description = "The key to press to force refresh to the file list.", })
+settings.define("nao.keys.cancel", { default = "tab", type = "string", description = "The key to press to cancel out of menus. You will need to be able to type program arguments without pressing this key.", })
+
+settings.define("nao.keys.up", { default = "w", type = "string", description = "The key to press to move the selector up.", })
+settings.define("nao.keys.down", { default = "s", type = "string", description = "The key to press to move the selector down.", })
+
+settings.define("nao.keys.activate", { default = "space", type = "string", description = "The key to press to run files and enter directories.", })
+settings.define("nao.keys.altActivate", { default = "leftAlt", type = "string", description = "The key to press to open the interaction menu.", })
+
+settings.define("nao.refreshInterval", { default = 5, type = "number", description = "How long to wait before automatically refreshing the file list. Set to 0 to disable", })
+
+settings.save()
 
 local key = {
     refresh = settings.get("nao.keys.refresh"),
+    cancel = settings.get("nao.keys.cancel"),
     up = settings.get("nao.keys.up"),
     down = settings.get("nao.keys.down"),
     activate = settings.get("nao.keys.activate"),
@@ -66,6 +70,7 @@ local popupOpen = false
 local fileWindow = window.create(masterWindow, 1, 2, w, h-1, false)
 local launchWindow = window.create(masterWindow, 1, 1, w, h, false)
 local launchArgsWindow = window.create(launchWindow, 1, 1, w, 1, false)
+local altMenuWindow = window.create(masterWindow, 1, 1, w, h, false)
 
 local function clearTerm(t)
     t = t or term
@@ -118,7 +123,9 @@ local function refresh()
     end
 end
 
-local function launchMenu(fileOrDir)
+local function launchMenu()
+    local fileOrDir = dirList[fileSelectorPosition]
+    
     popupOpen = true
     term.redirect(launchWindow)
     clearTerm()
@@ -139,29 +146,42 @@ local function launchMenu(fileOrDir)
         return shell.complete(fileOrDir.." "..line)
     end 
 
-    local args = read(nil, nil, autoComplete)
+    local args
+    local abort = false
 
-
-    -- TODO: allow aborting launch
-
-
-
+    parallel.waitForAny(
+        function()
+           args = read(nil, nil, autoComplete)
+        end,
+        function()
+            while true do
+                local _, k = os.pullEvent("key")
+                if k == key.cancel then
+                    abort = true
+                    return
+                end
+            end
+        end
+    )
 
     launchArgsWindow.setVisible(false)
     launchWindow.setVisible(false)
-    term.redirect(masterWindow)
-    local w, h = term.getSize()
-    local clientWindow = window.create(masterWindow, 1, 1, w, h)
-    term.redirect(clientWindow)
-    clearTerm()
 
-    -- TODO: take mbs private mode code
+    if not abort then
+        term.redirect(masterWindow)
+        local w, h = term.getSize()
+        local clientWindow = window.create(masterWindow, 1, 1, w, h)
+        term.redirect(clientWindow)
+        clearTerm()
 
-    shell.run(fileOrDir, args)
+        -- TODO: take mbs private mode code
 
-    write("Press any key to return to "..programName)
+        shell.run(fileOrDir, args)
 
-    os.pullEvent("key")
+        write("Press any key to return to "..programName)
+
+        os.pullEvent("key")
+    end
 
     term.redirect(masterWindow)
     popupOpen = false
@@ -185,20 +205,81 @@ local function activate()
         fileSelectorPosition = 0
         return
     else
-        launchMenu(fileOrDir)
+        launchMenu()
+    end
+end
+
+local altMenuOptions = { "attributes", "rename", "move", "copy", "delete"}
+altMenuOptions.n = #altMenuOptions
+
+local function activateOption(selectednumber)
+    local selectedOption = altMenuOptions[selectednumber]
+    if selectedOption == "attributes" then
+
+    elseif selectedOption == "rename" then
+
+    elseif selectedOption == "move" then
+
+    elseif selectedOption == "copy" then
+
+    elseif selectedOption == "delete" then
+
     end
 end
 
 local function altMenu()
+    local fileOrDir = dirList[fileSelectorPosition]
+    local fullPath = fs.combine(shell.dir(), fileOrDir)
+
+    local altSelectorPosition = 1
+
+    while true do
+        altMenuWindow.setVisible(false)
+        clearTerm()
+
+        print(fileOrDir)
+        print(fullPath)
+
+        altMenuWindow.setVisible(true)
+
+        local _, eventInfo = os.pullEvent("key")
+        -- TODO: click events
+        local keyCode = eventInfo
+        if keyCode == keys[key.activate] then
+            activateOption(altSelectorPosition)
+        elseif keyCode == keys[key.down] then
+            altSelectorPosition = math.min(altSelectorPosition+1, altMenuOptions.n)
+        elseif keyCode == keys[key.up] then
+            altSelectorPosition = math.max(altSelectorPosition-1, 0)
+        end
+    end
+
+
+end
+
+local function altActivate()
     if fileSelectorPosition == 0 then
         return
     end
 
-    local fileOrDir = dirList[fileSelectorPosition]
-    local fullPath = fs.combine(shell.dir(), fileOrDir)
-
     popupOpen = true
+    local w, h = term.getSize()
+    altMenuWindow = window.create(masterWindow, 1, 1, w, h, false)
+    term.redirect(altMenuWindow)
 
+    parallel.waitForAny(
+        altMenu,
+        function()
+            while true do
+                local _, k = os.pullEvent("key")
+                if k == key.cancel then
+                    return
+                end
+            end
+        end
+    )
+
+    term.redirect(masterWindow)
     popupOpen = false
 end
 
@@ -214,7 +295,7 @@ local function main()
                 activate()
                 refresh()
             elseif keyCode == keys[key.altActivate] then
-                altMenu()
+                altActivate()
                 refresh()
             elseif keyCode == keys[key.down] then
                 fileSelectorPosition = math.min(fileSelectorPosition+1, dirList.n)
